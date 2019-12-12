@@ -3,6 +3,8 @@ using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Threading;
 
 namespace FSync
 {
@@ -17,27 +19,32 @@ namespace FSync
             }
             IPEndPoint localEndPoint = new IPEndPoint(IPAddress.Any, 0);
 
-            Socket sender = new Socket(IPAddress.Any.AddressFamily,
+            Socket socket = new Socket(IPAddress.Any.AddressFamily,
                    SocketType.Dgram, ProtocolType.Udp);
 
-            sender.Bind(localEndPoint);
+            socket.Bind(localEndPoint);
             IPHostEntry ipHost = Dns.GetHostEntry(Dns.GetHostName());
             IPAddress remoteIpAddress = ipHost.AddressList[0];
             IPEndPoint remoteEndPoint=new IPEndPoint(remoteIpAddress,12881);
-            //sender.Connect(remoteIpAddress, 12881);
-            sender.SendTo(IpToBytes(sender.LocalEndPoint),remoteEndPoint);
+
+            socket.SendTo(IpToBytes(socket.LocalEndPoint),remoteEndPoint);
 
             byte[] inBuf = new byte[80];
-            int byteCount = sender.Receive(inBuf);
+            int byteCount = socket.Receive(inBuf);
             IPAddress ip = BytesToIp(inBuf, byteCount, out var port);
             Console.WriteLine($"Allocated port:{ip.ToString()}:{port}");
             remoteEndPoint = new IPEndPoint(ip, port);
-            sender.Connect(remoteEndPoint);
+            socket.Connect(remoteEndPoint);
+
+            Connection c=new Connection(socket);
 
             while (true)
             {
-                string msg = Console.ReadLine();
-                sender.Send(Encoding.UTF8.GetBytes(msg));
+                byte[] packet=new byte[8+1];
+                packet[0]=(byte)PacketType.Ping;
+                Array.Copy(BitConverter.GetBytes(DateTime.UtcNow.Ticks),0,packet,1,8);
+                c.dataSends.Add(packet);
+                Thread.Sleep(1);
             }
         }
 
@@ -79,7 +86,7 @@ namespace FSync
                 }
             }
         }
-
+        private static List<Connection> clientConnections=new List<Connection>();
         static void TalkToClientSocket(IPAddress address, ushort port)
         {
             Console.WriteLine($"Client Connected:{address.ToString()}:{port}");
@@ -91,16 +98,13 @@ namespace FSync
             IPEndPoint remoteEndPoint = new IPEndPoint(address, port);
             socket.Connect(remoteEndPoint);
 
-            Console.WriteLine("Sending data...");
             socket.Send(IpToBytes(socket.LocalEndPoint));
+            //TODO: packets might drop
 
-            while (true)
-            {
-                byte[] inbuf = new byte[1024];
-                int byteCount = socket.Receive(inbuf);
-
-                Console.WriteLine(Encoding.UTF8.GetChars(inbuf, 0, byteCount));
+            lock(clientConnections){
+                clientConnections.Add(new Connection(socket));
             }
+            
         }
     }
 }
